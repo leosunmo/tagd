@@ -23,8 +23,8 @@ type Config struct {
 
 // TaggingConfig to specify which ASGs to monitor and tag
 type TaggingConfig struct {
-	ASGName string              `yaml:"asgName"`
-	Tags    []map[string]string `yaml:"tags,omitempty"`
+	ASGName string            `yaml:"asgName"`
+	Tags    map[string]string `yaml:"tags,omitempty"`
 }
 
 type Daemon struct {
@@ -86,14 +86,14 @@ func NewDaemon(
 	return daemon, nil
 }
 
-func (d *Daemon) addTagger(asgName string, tags []map[string]string) {
+func (d *Daemon) addTagger(asgName string, tags map[string]string) {
 	d.asgTaggers[asgName] = NewAutoscalingTagger(asgName, tags, d.queue, d.asgClient, d.ec2Client, d.log)
 }
 
 func (d *Daemon) Start(ctx context.Context) error {
 	d.log.Info("Starting Daemon")
 	d.log.Debug("Subscribing SQS queue to SNS topic", zap.String("topic", d.queue.topicArn))
-	if err := d.queue.Subscribe(); err != nil {
+	if err := d.queue.Subscribe(ctx); err != nil {
 		return err
 	}
 
@@ -113,7 +113,7 @@ func (d *Daemon) Start(ctx context.Context) error {
 			continue
 		}
 		for i, instance := range instances {
-			d.log.Info(fmt.Sprintf("[%d/%d] Tagging existing instance %s", i, len(instances), instance))
+			d.log.Info(fmt.Sprintf("[%d/%d] Tagging existing instance %s", i+1, len(instances), instance))
 			asg.TagVolumes(instance)
 		}
 	}

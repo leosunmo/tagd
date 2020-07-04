@@ -58,7 +58,7 @@ type Message struct {
 // AutoscalingTagger monitors an ASG for events and processes them
 type AutoscalingTagger struct {
 	asgName     string
-	tags        []map[string]string
+	tags        map[string]string
 	queue       *Queue
 	autoscaling AutoscalingClient
 	ec2Client   EC2Client
@@ -66,7 +66,7 @@ type AutoscalingTagger struct {
 }
 
 // NewAutoscalingTagger returns a new AutoscalingTagger for an ASG
-func NewAutoscalingTagger(asgName string, tags []map[string]string, queue *Queue, autoscaling AutoscalingClient, ec2Client EC2Client, logger *zap.Logger) *AutoscalingTagger {
+func NewAutoscalingTagger(asgName string, tags map[string]string, queue *Queue, autoscaling AutoscalingClient, ec2Client EC2Client, logger *zap.Logger) *AutoscalingTagger {
 	return &AutoscalingTagger{
 		asgName:     asgName,
 		queue:       queue,
@@ -178,14 +178,12 @@ func (l *AutoscalingTagger) TagVolumes(instanceID string) error {
 
 func (l *AutoscalingTagger) buildTags() []*ec2.Tag {
 	ec2Tags := make([]*ec2.Tag, len(l.tags))
-	for _, tagSet := range l.tags {
-		for k, v := range tagSet {
-			ec2Tag := &ec2.Tag{
-				Key:   aws.String(k),
-				Value: aws.String(v),
-			}
-			ec2Tags = append(ec2Tags, ec2Tag)
+	for k, v := range l.tags {
+		ec2Tag := &ec2.Tag{
+			Key:   aws.String(k),
+			Value: aws.String(v),
 		}
+		ec2Tags = append(ec2Tags, ec2Tag)
 	}
 	return ec2Tags
 }
