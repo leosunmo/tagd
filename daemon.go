@@ -23,9 +23,8 @@ type Config struct {
 
 // TaggingConfig to specify which ASGs to monitor and tag
 type TaggingConfig struct {
-	ASGName        string              `yaml:"asgName"`
-	Tags           []map[string]string `yaml:"tags,omitempty"`
-	PropagateDisks bool                `yaml:"tagDisks,omitempty"`
+	ASGName string              `yaml:"asgName"`
+	Tags    []map[string]string `yaml:"tags,omitempty"`
 }
 
 type Daemon struct {
