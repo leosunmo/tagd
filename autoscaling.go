@@ -4,6 +4,7 @@ package tagd
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -58,7 +59,7 @@ type Message struct {
 // AutoscalingTagger monitors an ASG for events and processes them
 type AutoscalingTagger struct {
 	asgName     string
-	tags        map[string]string
+	tags        *TaggingConfig
 	queue       *Queue
 	autoscaling AutoscalingClient
 	ec2Client   EC2Client
@@ -66,7 +67,7 @@ type AutoscalingTagger struct {
 }
 
 // NewAutoscalingTagger returns a new AutoscalingTagger for an ASG
-func NewAutoscalingTagger(asgName string, tags map[string]string, queue *Queue, autoscaling AutoscalingClient, ec2Client EC2Client, logger *zap.Logger) *AutoscalingTagger {
+func NewAutoscalingTagger(asgName string, tags *TaggingConfig, queue *Queue, autoscaling AutoscalingClient, ec2Client EC2Client, logger *zap.Logger) *AutoscalingTagger {
 	return &AutoscalingTagger{
 		asgName:     asgName,
 		queue:       queue,
@@ -82,8 +83,12 @@ func (l *AutoscalingTagger) Name() string {
 	return l.asgName
 }
 
-func (l *AutoscalingTagger) Handle(msg Message) error {
-	err := l.TagVolumes(msg.EC2InstanceID)
+func (l *AutoscalingTagger) Handle(InstanceID string) error {
+	tags, err := l.buildTags(InstanceID)
+	if err != nil {
+		return err
+	}
+	err = l.tagVolumes(InstanceID, tags)
 	if err != nil {
 		return err
 	}
@@ -109,8 +114,51 @@ func (l *AutoscalingTagger) EnableNotifications() error {
 	return nil
 }
 
+func (l *AutoscalingTagger) buildTags(instanceID string) (map[string]string, error) {
+	l.log.Debug(fmt.Sprintf("Processing tags for instance %s", instanceID), zap.String("asg", l.asgName))
+	// final product
+	tagMap := make(map[string]string)
+
+	svc := l.ec2Client
+	input := ec2.DescribeTagsInput{
+		MaxResults: aws.Int64(50), // We only do 50 tags, not sure if that's a sane default
+		Filters: []*ec2.Filter{
+			{
+				Name: aws.String("resource-id"),
+				Values: []*string{
+					aws.String(instanceID),
+				},
+			},
+		},
+	}
+
+	result, err := svc.DescribeTags(&input)
+	if err != nil {
+		return tagMap, err
+	}
+	// build tag map for easier handling
+	instanceTagMap := make(map[string]string, len(result.Tags))
+	for _, tagDesc := range result.Tags {
+		instanceTagMap[*tagDesc.Key] = *tagDesc.Value
+	}
+
+	// process prefixed tags first as the statically configured ones should override
+	for k, v := range instanceTagMap {
+		for _, prefix := range l.tags.KeyPrefix {
+			if strings.HasPrefix(strings.ToUpper(k), strings.ToUpper(prefix)) {
+				tagMap[k] = v
+			}
+		}
+	}
+	// then add the statically configured ones.
+	for staticK, staticV := range l.tags.Tags {
+		tagMap[staticK] = staticV
+	}
+	return tagMap, nil
+}
+
 // Instances return all instance IDs belonging to the ASG
-func (l *AutoscalingTagger) Instances() ([]string, error) {
+func (l *AutoscalingTagger) instances() ([]string, error) {
 	input := &autoscaling.DescribeAutoScalingGroupsInput{
 		AutoScalingGroupNames: aws.StringSlice([]string{l.asgName}),
 		MaxRecords:            aws.Int64(100),
@@ -132,7 +180,7 @@ func (l *AutoscalingTagger) Instances() ([]string, error) {
 }
 
 // TagVolumes tags all volumes attached to instanceID with the configured tags for the AutoscalingTagger
-func (l *AutoscalingTagger) TagVolumes(instanceID string) error {
+func (l *AutoscalingTagger) tagVolumes(instanceID string, tags map[string]string) error {
 	l.log.Info(fmt.Sprintf("Tagging disks attached to instance %s", instanceID), zap.String("asg", l.asgName))
 	svc := l.ec2Client
 	input := &ec2.DescribeVolumesInput{
@@ -161,24 +209,35 @@ func (l *AutoscalingTagger) TagVolumes(instanceID string) error {
 		volumeIDs = append(volumeIDs, vol.VolumeId)
 	}
 
-	volTags := l.buildTags()
-
-	tagInput := &ec2.CreateTagsInput{
-		Resources: volumeIDs,
-		Tags:      volTags,
-	}
-
-	_, err = svc.CreateTags(tagInput)
+	err = l.TagResources(volumeIDs, tags)
 	if err != nil {
 		return err
 	}
+
 	l.log.Debug(fmt.Sprintf("Tagged %d volume(s) attached to %s", len(volumeIDs), instanceID))
 	return nil
 }
 
-func (l *AutoscalingTagger) buildTags() []*ec2.Tag {
-	ec2Tags := make([]*ec2.Tag, len(l.tags))
-	for k, v := range l.tags {
+// TagResources takes a list of AWS resource IDs and tags them all with the provided tags
+func (l *AutoscalingTagger) TagResources(resourceIDs []*string, tags map[string]string) error {
+	ec2Tags := toEC2Tags(tags)
+	svc := l.ec2Client
+
+	tagInput := &ec2.CreateTagsInput{
+		Resources: resourceIDs,
+		Tags:      ec2Tags,
+	}
+
+	_, err := svc.CreateTags(tagInput)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func toEC2Tags(tags map[string]string) []*ec2.Tag {
+	ec2Tags := make([]*ec2.Tag, len(tags))
+	for k, v := range tags {
 		ec2Tag := &ec2.Tag{
 			Key:   aws.String(k),
 			Value: aws.String(v),

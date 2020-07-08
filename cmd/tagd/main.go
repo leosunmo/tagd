@@ -22,6 +22,7 @@ func main() {
 
 	fs := pflag.NewFlagSet("default", pflag.ContinueOnError)
 	fs.StringP("level", "l", "info", "log level: debug, info, warn, error or panic")
+	fs.Bool("backfill", false, "Enable backfilling tags of existing resources")
 	fs.String("config", "./config.yaml", "Configuration file for ASG Tagging")
 	fs.String("sqs-queue-name", "", "Name of SQS queue to monitor for ASG events")
 	fs.String("sns-topic-arn", "", "The SNS topic ARN to use for ASG Notification")
@@ -68,6 +69,8 @@ func main() {
 		fs.PrintDefaults()
 		os.Exit(1)
 	}
+
+	config.Backfill = viper.GetBool("backfill")
 
 	config.SNSTopicARN = snsCfg
 	config.SQSQueueName = sqsCfg
