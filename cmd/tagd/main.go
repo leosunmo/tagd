@@ -16,12 +16,17 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"gopkg.in/yaml.v2"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/clientcmd"
 )
 
 func main() {
 
 	fs := pflag.NewFlagSet("default", pflag.ContinueOnError)
 	fs.StringP("level", "l", "info", "log level: debug, info, warn, error or panic")
+	fs.String("kubeconfig", "", "Location of Kubeconfig if running outside cluster")
+	fs.String("kube-api", "", "Address of the kubernetes api server")
+	fs.Bool("disable-kubernetes", false, "Flag to disable K8s functionality")
 	fs.Bool("backfill", false, "Enable backfilling tags of existing resources")
 	fs.String("config", "./config.yaml", "Configuration file for ASG Tagging")
 	fs.String("sqs-queue-name", "", "Name of SQS queue to monitor for ASG events")
@@ -81,7 +86,23 @@ func main() {
 		logger.Fatal("Failed to create new aws session", zap.Error(err))
 	}
 
-	d, err := tagd.New(config, sess, logger)
+	var k8sClient *kubernetes.Clientset
+
+	if !viper.GetBool("disable-kubernetes") {
+		// Create K8s credentials
+		kubeConfPath := viper.GetString("kubeconfig")
+		kubeAPIAddress := viper.GetString("kube-api")
+		k8sConfig, err := clientcmd.BuildConfigFromFlags(kubeAPIAddress, kubeConfPath)
+		if err != nil {
+			logger.Fatal("Failed to create K8s config", zap.Error(err))
+		}
+		k8sClient, err = kubernetes.NewForConfig(k8sConfig)
+		if err != nil {
+			logger.Fatal("Failed to create k8s client", zap.Error(err))
+		}
+	}
+
+	d, err := tagd.New(config, sess, k8sClient, logger)
 	if err != nil {
 		logger.Fatal("failed to create daemon", zap.Error(err))
 	}

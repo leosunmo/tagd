@@ -12,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/sns"
 	"github.com/aws/aws-sdk-go/service/sqs"
 	"go.uber.org/zap"
+	"k8s.io/client-go/kubernetes"
 )
 
 // Config for the tagd Daemon.
@@ -36,18 +37,20 @@ type Daemon struct {
 	snsClient  SNSClient
 	asgClient  AutoscalingClient
 	ec2Client  EC2Client
+	k8sClient  *kubernetes.Clientset
 	asgTaggers map[string]*AutoscalingTagger
 	log        *zap.Logger
 }
 
 // New creates a new tagd Daemon.
-func New(config *Config, sess *session.Session, logger *zap.Logger) (*Daemon, error) {
+func New(config *Config, sess *session.Session, k8sClient *kubernetes.Clientset, logger *zap.Logger) (*Daemon, error) {
 	return NewDaemon(
 		config,
 		sqs.New(sess),
 		sns.New(sess),
 		autoscaling.New(sess),
 		ec2.New(sess),
+		k8sClient,
 		logger,
 	)
 }
@@ -59,6 +62,7 @@ func NewDaemon(
 	snsClient SNSClient,
 	asgClient AutoscalingClient,
 	ec2Client EC2Client,
+	k8sClient *kubernetes.Clientset,
 	logger *zap.Logger,
 ) (*Daemon, error) {
 	daemon := &Daemon{
@@ -67,6 +71,7 @@ func NewDaemon(
 		snsClient: snsClient,
 		asgClient: asgClient,
 		ec2Client: ec2Client,
+		k8sClient: k8sClient,
 		log:       logger,
 	}
 
