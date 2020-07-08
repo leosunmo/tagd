@@ -8,4 +8,6 @@ require (
 	github.com/spf13/viper v1.7.0
 	go.uber.org/zap v1.15.0
 	gopkg.in/yaml.v2 v2.3.0
+	k8s.io/api v0.15.12
+	k8s.io/client-go v0.15.12
 )
