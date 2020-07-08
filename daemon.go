@@ -17,14 +17,16 @@ import (
 // Config for the tagd Daemon.
 type Config struct {
 	TaggingConfigs []TaggingConfig `yaml:"tagConfig"`
+	Backfill       bool
 	SNSTopicARN    string
 	SQSQueueName   string
 }
 
 // TaggingConfig to specify which ASGs to monitor and tag
 type TaggingConfig struct {
-	ASGName string            `yaml:"asgName"`
-	Tags    map[string]string `yaml:"tags,omitempty"`
+	ASGName   string            `yaml:"asgName"`
+	Tags      map[string]string `yaml:"tags,omitempty"`
+	KeyPrefix []string          `yaml:"keyPrefix,omitempty"`
 }
 
 type Daemon struct {
@@ -81,12 +83,12 @@ func NewDaemon(
 
 	daemon.asgTaggers = make(map[string]*AutoscalingTagger)
 	for _, conf := range config.TaggingConfigs {
-		daemon.addTagger(conf.ASGName, conf.Tags)
+		daemon.addTagger(conf.ASGName, &conf)
 	}
 	return daemon, nil
 }
 
-func (d *Daemon) addTagger(asgName string, tags map[string]string) {
+func (d *Daemon) addTagger(asgName string, tags *TaggingConfig) {
 	d.asgTaggers[asgName] = NewAutoscalingTagger(asgName, tags, d.queue, d.asgClient, d.ec2Client, d.log)
 }
 
@@ -104,20 +106,22 @@ func (d *Daemon) Start(ctx context.Context) error {
 		}
 	}
 
-	// Iterate over all the ASGs and tag existing disks before we start listening to the SQS queue
-	for _, asg := range d.asgTaggers {
-		d.log.Info(fmt.Sprintf("Processing existing disks for ASG %s", asg.asgName))
-		instances, err := asg.Instances()
-		if err != nil {
-			d.log.Error(fmt.Sprintf("failed to look up instances for ASG %s", asg.asgName), zap.Error(err))
-			continue
-		}
-		for i, instance := range instances {
-			d.log.Info(fmt.Sprintf("[%d/%d] Tagging existing instance %s", i+1, len(instances), instance))
-			asg.TagVolumes(instance)
+	if d.config.Backfill {
+		d.log.Debug("Backfilling enabled, processing...")
+		// Iterate over all the ASGs and tag existing disks before we start listening to the SQS queue
+		for _, asg := range d.asgTaggers {
+			d.log.Info(fmt.Sprintf("Processing existing disks for ASG %s", asg.asgName))
+			instances, err := asg.instances()
+			if err != nil {
+				d.log.Error(fmt.Sprintf("failed to look up instances for ASG %s", asg.asgName), zap.Error(err))
+				continue
+			}
+			for i, instance := range instances {
+				d.log.Info(fmt.Sprintf("[%d/%d] Tagging existing instance %s", i+1, len(instances), instance))
+				asg.Handle(instance)
+			}
 		}
 	}
-
 	d.log.Debug("Listening to SQS Queue...")
 	for {
 		select {
@@ -132,10 +136,6 @@ func (d *Daemon) Start(ctx context.Context) error {
 			for _, m := range messages {
 				var env Envelope
 				var msg Message
-
-				if err := d.queue.DeleteMessage(ctx, aws.StringValue(m.ReceiptHandle)); err != nil {
-					d.log.Warn("Failed to delete SQS message", zap.Error(err))
-				}
 
 				// unmarshal outer layer
 				if err := json.Unmarshal([]byte(*m.Body), &env); err != nil {
@@ -164,7 +164,11 @@ func (d *Daemon) Start(ctx context.Context) error {
 					continue
 				}
 
-				d.asgTaggers[msg.GroupName].Handle(msg)
+				if err := d.queue.DeleteMessage(ctx, aws.StringValue(m.ReceiptHandle)); err != nil {
+					d.log.Warn("Failed to delete SQS message", zap.Error(err))
+				}
+
+				d.asgTaggers[msg.GroupName].Handle(msg.EC2InstanceID)
 			}
 		}
 	}
