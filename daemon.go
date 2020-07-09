@@ -94,15 +94,19 @@ func (d *Daemon) addTagger(asgName string, tags *TaggingConfig) {
 
 func (d *Daemon) Start(ctx context.Context) error {
 	d.log.Info("Starting Daemon")
-	d.log.Debug("Subscribing SQS queue to SNS topic", zap.String("topic", d.queue.topicArn))
-	if err := d.queue.Subscribe(ctx); err != nil {
-		return err
-	}
 
-	d.log.Debug("Enabling notifications to ASGs")
-	for _, asg := range d.asgTaggers {
-		if err := asg.EnableNotifications(); err != nil {
-			d.log.Error(fmt.Sprintf("failed to enable notifications for ASG %s", asg.asgName), zap.Error(err))
+	// If the SNS topic is not empty, let Tagd subscribe and enable asg notifications
+	if d.config.SNSTopicARN != "" {
+		d.log.Debug("Subscribing SQS queue to SNS topic", zap.String("topic", d.queue.topicArn))
+		if err := d.queue.Subscribe(ctx); err != nil {
+			return err
+		}
+
+		d.log.Debug("Enabling notifications to ASGs")
+		for _, asg := range d.asgTaggers {
+			if err := asg.EnableNotifications(); err != nil {
+				d.log.Error(fmt.Sprintf("failed to enable notifications for ASG %s", asg.asgName), zap.Error(err))
+			}
 		}
 	}
 

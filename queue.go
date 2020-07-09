@@ -47,10 +47,13 @@ func NewQueue(queueName, topicArn string, sqsClient SQSClient, snsClient SNSClie
 		sqsClient: sqsClient,
 		snsClient: snsClient,
 	}
-	snsCtx, snsCancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer snsCancel()
-	if err := queue.TopicExists(snsCtx); err != nil {
-		return nil, err
+	// Only check for SNS topic existance if we want tagd to manage it
+	if topicArn != "" {
+		snsCtx, snsCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer snsCancel()
+		if err := queue.TopicExists(snsCtx); err != nil {
+			return nil, err
+		}
 	}
 	sqsCtx, sqsCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer sqsCancel()
@@ -123,19 +126,21 @@ func (q *Queue) getArn(ctx context.Context) (string, error) {
 
 // Subscribe the queue to an SNS topic
 func (q *Queue) Subscribe(ctx context.Context) error {
-	arn, err := q.getArn(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to get queue ARN: %w", err)
+	if q.topicArn != "" {
+		arn, err := q.getArn(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to get queue ARN: %w", err)
+		}
+		out, err := q.snsClient.SubscribeWithContext(ctx, &sns.SubscribeInput{
+			TopicArn: aws.String(q.topicArn),
+			Protocol: aws.String("sqs"),
+			Endpoint: aws.String(arn),
+		})
+		if err != nil {
+			return fmt.Errorf("failed to subscribe to sqs: %w", err)
+		}
+		q.subscriptionArn = aws.StringValue(out.SubscriptionArn)
 	}
-	out, err := q.snsClient.SubscribeWithContext(ctx, &sns.SubscribeInput{
-		TopicArn: aws.String(q.topicArn),
-		Protocol: aws.String("sqs"),
-		Endpoint: aws.String(arn),
-	})
-	if err != nil {
-		return fmt.Errorf("failed to subscribe to sqs: %w", err)
-	}
-	q.subscriptionArn = aws.StringValue(out.SubscriptionArn)
 	return nil
 }
 
