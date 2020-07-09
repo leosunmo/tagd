@@ -25,7 +25,7 @@ func main() {
 	fs.Bool("backfill", false, "Enable backfilling tags of existing resources")
 	fs.String("config", "./config.yaml", "Configuration file for ASG Tagging")
 	fs.String("sqs-queue-name", "", "Name of SQS queue to monitor for ASG events")
-	fs.String("sns-topic-arn", "", "The SNS topic ARN to use for ASG Notification")
+	fs.String("sns-topic-arn", "", "If not empty, tagd will set up ASG Notification and subscribe SQS to this SNS topic")
 
 	// parse flags
 	err := fs.Parse(os.Args[1:])
@@ -52,11 +52,7 @@ func main() {
 
 	snsCfg := viper.GetString("sns-topic-arn")
 	sqsCfg := viper.GetString("sqs-queue-name")
-	if snsCfg == "" {
-		fmt.Println("Please provide --sns-topic-arn")
-		fs.PrintDefaults()
-		os.Exit(1)
-	}
+
 	if sqsCfg == "" {
 		fmt.Println("Please provide --sqs-queue-name")
 		fs.PrintDefaults()
