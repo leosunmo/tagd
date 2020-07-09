@@ -137,6 +137,10 @@ func (d *Daemon) Start(ctx context.Context) error {
 				var env Envelope
 				var msg Message
 
+				if err := d.queue.DeleteMessage(ctx, aws.StringValue(m.ReceiptHandle)); err != nil {
+					d.log.Warn("Failed to delete SQS message", zap.Error(err))
+				}
+
 				// unmarshal outer layer
 				if err := json.Unmarshal([]byte(*m.Body), &env); err != nil {
 					d.log.Error("Failed to unmarshal envelope", zap.Error(err))
@@ -162,10 +166,6 @@ func (d *Daemon) Start(ctx context.Context) error {
 				if msg.Event != "autoscaling:EC2_INSTANCE_LAUNCH" {
 					d.log.Debug(fmt.Sprintf("Skipping autoscaling event, %s not ECS_INSTANCE_LAUNCH", msg.Event))
 					continue
-				}
-
-				if err := d.queue.DeleteMessage(ctx, aws.StringValue(m.ReceiptHandle)); err != nil {
-					d.log.Warn("Failed to delete SQS message", zap.Error(err))
 				}
 
 				d.asgTaggers[msg.GroupName].Handle(msg.EC2InstanceID)
