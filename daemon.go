@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
@@ -11,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/ec2"
 	"github.com/aws/aws-sdk-go/service/sns"
 	"github.com/aws/aws-sdk-go/service/sqs"
+	"github.com/ryanuber/go-glob"
 	"go.uber.org/zap"
 )
 
@@ -82,18 +84,32 @@ func NewDaemon(
 	daemon.queue = queue
 
 	daemon.asgTaggers = make(map[string]*AutoscalingTagger)
+
+	// Give it a very generous 1 minute to page through all ASGs
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute*1)
+	defer cancel()
+	asgNameList, err := daemon.listAutoscalingGroupNames(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// Iterate over the configured ASGs and the actual ASGs and check for glob matches (or exact matches)
 	for _, conf := range config.TaggingConfigs {
-		daemon.addTagger(conf.ASGName, &conf)
+		for _, asgName := range asgNameList {
+			if glob.Glob(conf.ASGName, asgName) {
+				daemon.addTagger(asgName, &conf)
+			}
+		}
 	}
 	return daemon, nil
 }
 
-func (d *Daemon) addTagger(asgName string, tags *TaggingConfig) {
-	d.asgTaggers[asgName] = NewAutoscalingTagger(asgName, tags, d.queue, d.asgClient, d.ec2Client, d.log)
-}
-
 func (d *Daemon) Start(ctx context.Context) error {
 	d.log.Info("Starting Daemon")
+
+	for _, asg := range d.asgTaggers {
+		d.log.Info(fmt.Sprintf("Managing tags for ASG %s", asg.asgName))
+	}
 
 	// If the SNS topic is not empty, let Tagd subscribe and enable asg notifications
 	if d.config.SNSTopicARN != "" {
@@ -126,13 +142,12 @@ func (d *Daemon) Start(ctx context.Context) error {
 			}
 		}
 	}
-	d.log.Debug("Listening to SQS Queue...")
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
 		default:
-			d.log.Debug("Polling SQS for messages", zap.String("queueURL", d.queue.url))
+			d.log.Info("Polling SQS for messages", zap.String("queueURL", d.queue.url))
 			messages, err := d.queue.GetMessages(ctx)
 			if err != nil {
 				d.log.Warn("Failed to get messages from SQS", zap.Error(err))
@@ -176,4 +191,23 @@ func (d *Daemon) Start(ctx context.Context) error {
 			}
 		}
 	}
+}
+
+func (d *Daemon) listAutoscalingGroupNames(ctx context.Context) ([]string, error) {
+	asgList := []string{}
+	input := &autoscaling.DescribeAutoScalingGroupsInput{}
+	err := d.asgClient.DescribeAutoScalingGroupsPagesWithContext(ctx, input, func(page *autoscaling.DescribeAutoScalingGroupsOutput, lastPage bool) bool {
+		for _, asg := range page.AutoScalingGroups {
+			asgList = append(asgList, *asg.AutoScalingGroupName)
+		}
+		return true
+	})
+	if err != nil {
+		return nil, err
+	}
+	return asgList, nil
+}
+
+func (d *Daemon) addTagger(asgName string, tags *TaggingConfig) {
+	d.asgTaggers[asgName] = NewAutoscalingTagger(asgName, tags, d.queue, d.asgClient, d.ec2Client, d.log)
 }
