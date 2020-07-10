@@ -142,12 +142,13 @@ func (d *Daemon) Start(ctx context.Context) error {
 			}
 		}
 	}
+	d.log.Info("Polling SQS queue for events...")
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
 		default:
-			d.log.Info("Polling SQS for messages", zap.String("queueURL", d.queue.url))
+			d.log.Debug("Polling SQS for messages", zap.String("queueURL", d.queue.url))
 			messages, err := d.queue.GetMessages(ctx)
 			if err != nil {
 				d.log.Warn("Failed to get messages from SQS", zap.Error(err))
