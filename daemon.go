@@ -107,6 +107,10 @@ func NewDaemon(
 func (d *Daemon) Start(ctx context.Context) error {
 	d.log.Info("Starting Daemon")
 
+	for _, asg := range d.asgTaggers {
+		d.log.Info(fmt.Sprintf("Managing tags for ASG %s", asg.asgName))
+	}
+
 	// If the SNS topic is not empty, let Tagd subscribe and enable asg notifications
 	if d.config.SNSTopicARN != "" {
 		d.log.Debug("Subscribing SQS queue to SNS topic", zap.String("topic", d.queue.topicArn))
@@ -138,13 +142,12 @@ func (d *Daemon) Start(ctx context.Context) error {
 			}
 		}
 	}
-	d.log.Debug("Listening to SQS Queue...")
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
 		default:
-			d.log.Debug("Polling SQS for messages", zap.String("queueURL", d.queue.url))
+			d.log.Info("Polling SQS for messages", zap.String("queueURL", d.queue.url))
 			messages, err := d.queue.GetMessages(ctx)
 			if err != nil {
 				d.log.Warn("Failed to get messages from SQS", zap.Error(err))
